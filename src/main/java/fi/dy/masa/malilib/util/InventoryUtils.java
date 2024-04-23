@@ -1,5 +1,6 @@
 package fi.dy.masa.malilib.util;
 
+import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -13,6 +14,7 @@ import net.minecraft.block.ChestBlock;
 import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.entity.ChestBlockEntity;
+import net.minecraft.block.entity.ShulkerBoxBlockEntity;
 import net.minecraft.block.enums.ChestType;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.component.ComponentMap;
@@ -23,6 +25,7 @@ import net.minecraft.inventory.DoubleInventory;
 import net.minecraft.inventory.Inventory;
 import net.minecraft.inventory.SimpleInventory;
 import net.minecraft.item.BlockItem;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtList;
@@ -269,13 +272,7 @@ public class InventoryUtils
         if (container != null) {
             DefaultedList<ItemStack> itemStackOut = DefaultedList.of();
             container.copyTo(itemStackOut);
-            DefaultedList<ItemStack> nonEmptySlots = DefaultedList.of();
-            nonEmptySlots.addAll(
-                    itemStackOut.stream()
-                            .filter(itemStack -> !itemStack.isEmpty())
-                            .toList()
-            );
-            return nonEmptySlots;
+            return itemStackOut;
         }
 
         return EMPTY_LIST;
@@ -291,14 +288,61 @@ public class InventoryUtils
      */
     public static DefaultedList<ItemStack> getStoredItems(ItemStack stackIn, int slotCount)
     {
-        ContainerComponent container = stackIn.getComponents().get(DataComponentTypes.CONTAINER);
-        if (container != null) {
-            DefaultedList<ItemStack> itemStackOut = DefaultedList.ofSize(slotCount, ItemStack.EMPTY);
-            container.copyTo(itemStackOut);
-            return itemStackOut;
-        }
+        ComponentMap data = stackIn.getComponents();
+        if (data != null && data.contains(DataComponentTypes.CONTAINER))
+        {
+            ContainerComponent itemContainer = data.get(DataComponentTypes.CONTAINER);
+            if (itemContainer != null)
+            {
+                DefaultedList<ItemStack> items = EMPTY_LIST;
+                Iterator<ItemStack> iter = itemContainer.stream().iterator();
 
-        return EMPTY_LIST;
+                if (slotCount <= 0)
+                {
+                    Item itemIn = stackIn.getItem();
+                    if (itemIn instanceof BlockItem && ((BlockItem) itemIn).getBlock() instanceof ShulkerBoxBlock)
+                        slotCount = ShulkerBoxBlockEntity.INVENTORY_SIZE;
+                    else
+                        slotCount = 27;
+                    for (int i = 0; i < slotCount; i++)
+                    {
+                        if (iter.hasNext())
+                        {
+                            items.add(iter.next());
+                        }
+                        else
+                        {
+                            items.add(ItemStack.EMPTY);
+                        }
+                    }
+                    return items;
+                }
+                else
+                {
+                    if (slotCount > 256)
+                    {
+                        // ContainerComponent.MAX_SLOTS
+                        slotCount = 256;
+                    }
+                    for (int i = 0; i < slotCount; i++)
+                    {
+                        if (iter.hasNext())
+                        {
+                            items.add(iter.next());
+                        }
+                        else
+                        {
+                            items.add(ItemStack.EMPTY);
+                        }
+                    }
+                    return items;
+                }
+            }
+            else
+                return EMPTY_LIST;
+        }
+        else
+            return EMPTY_LIST;
     }
 
     /**
