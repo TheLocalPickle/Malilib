@@ -1,7 +1,10 @@
 package fi.dy.masa.malilib.util;
 
+import java.util.Iterator;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import com.google.common.collect.ImmutableSet;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
@@ -11,13 +14,18 @@ import net.minecraft.block.ChestBlock;
 import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.entity.ChestBlockEntity;
+import net.minecraft.block.entity.ShulkerBoxBlockEntity;
 import net.minecraft.block.enums.ChestType;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.component.ComponentMap;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.inventory.DoubleInventory;
 import net.minecraft.inventory.Inventory;
 import net.minecraft.inventory.SimpleInventory;
 import net.minecraft.item.BlockItem;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtList;
@@ -31,7 +39,6 @@ import net.minecraft.world.World;
 
 public class InventoryUtils
 {
-    public static final ImmutableSet<String> DAMAGE_KEY = ImmutableSet.of("Damage");
     private static final DefaultedList<ItemStack> EMPTY_LIST = DefaultedList.of();
 
     /**
@@ -39,7 +46,7 @@ public class InventoryUtils
      */
     public static boolean areStacksEqual(ItemStack stack1, ItemStack stack2)
     {
-        return ItemStack.canCombine(stack1, stack2);
+        return ItemStack.areItemsEqual(stack1, stack2);
     }
 
     /**
@@ -53,44 +60,9 @@ public class InventoryUtils
             return false;
         }
 
-        NbtCompound tag1 = stack1.getNbt();
-        NbtCompound tag2 = stack2.getNbt();
-
-        if (tag1 == null || tag2 == null)
-        {
-            return tag1 == tag2;
-        }
-
-        if (stack1.isDamageable() == false && stack2.isDamageable() == false)
-        {
-            return Objects.equals(tag1, tag2);
-        }
-
-        return areNbtEqualIgnoreKeys(tag1, tag2, DAMAGE_KEY);
-    }
-
-    public static boolean areNbtEqualIgnoreKeys(NbtCompound tag1, NbtCompound tag2, Set<String> ignoredKeys)
-    {
-        Set<String> keys1 = tag1.getKeys();
-        Set<String> keys2 = tag2.getKeys();
-
-        keys1.removeAll(ignoredKeys);
-        keys2.removeAll(ignoredKeys);
-
-        if (Objects.equals(keys1, keys2) == false)
-        {
-            return false;
-        }
-
-        for (String key : keys1)
-        {
-            if (Objects.equals(tag1.get(key), tag2.get(key)) == false)
-            {
-                return false;
-            }
-        }
-
-        return true;
+        ComponentMap map1 = stack1.getComponents().filtered(type -> type != DataComponentTypes.DAMAGE);
+        ComponentMap map2 = stack2.getComponents().filtered(type -> type != DataComponentTypes.DAMAGE);
+        return map1.equals(map2);
     }
 
     /**
@@ -284,20 +256,7 @@ public class InventoryUtils
      */
     public static boolean shulkerBoxHasItems(ItemStack stackShulkerBox)
     {
-        NbtCompound nbt = stackShulkerBox.getNbt();
-
-        if (nbt != null && nbt.contains("BlockEntityTag", Constants.NBT.TAG_COMPOUND))
-        {
-            NbtCompound tag = nbt.getCompound("BlockEntityTag");
-
-            if (tag.contains("Items", Constants.NBT.TAG_LIST))
-            {
-                NbtList tagList = tag.getList("Items", Constants.NBT.TAG_COMPOUND);
-                return tagList.size() > 0;
-            }
-        }
-
-        return false;
+        return !getStoredItems(stackShulkerBox).isEmpty();
     }
 
     /**
@@ -309,33 +268,14 @@ public class InventoryUtils
      */
     public static DefaultedList<ItemStack> getStoredItems(ItemStack stackIn)
     {
-        NbtCompound nbt = stackIn.getNbt();
-
-        if (nbt != null && nbt.contains("BlockEntityTag", Constants.NBT.TAG_COMPOUND))
-        {
-            NbtCompound tagBlockEntity = nbt.getCompound("BlockEntityTag");
-
-            if (tagBlockEntity.contains("Items", Constants.NBT.TAG_LIST))
-            {
-                DefaultedList<ItemStack> items = DefaultedList.of();
-                NbtList tagList = tagBlockEntity.getList("Items", Constants.NBT.TAG_COMPOUND);
-                final int count = tagList.size();
-
-                for (int i = 0; i < count; ++i)
-                {
-                    ItemStack stack = ItemStack.fromNbt(tagList.getCompound(i));
-
-                    if (stack.isEmpty() == false)
-                    {
-                        items.add(stack);
-                    }
-                }
-
-                return items;
-            }
+        ContainerComponent container = stackIn.getComponents().get(DataComponentTypes.CONTAINER);
+        if (container != null) {
+            DefaultedList<ItemStack> itemStackOut = DefaultedList.of();
+            container.copyTo(itemStackOut);
+            return itemStackOut;
         }
 
-        return DefaultedList.of();
+        return EMPTY_LIST;
     }
 
     /**
@@ -348,53 +288,61 @@ public class InventoryUtils
      */
     public static DefaultedList<ItemStack> getStoredItems(ItemStack stackIn, int slotCount)
     {
-        NbtCompound nbt = stackIn.getNbt();
-
-        if (nbt != null && nbt.contains("BlockEntityTag", Constants.NBT.TAG_COMPOUND))
+        ComponentMap data = stackIn.getComponents();
+        if (data != null && data.contains(DataComponentTypes.CONTAINER))
         {
-            NbtCompound tagBlockEntity = nbt.getCompound("BlockEntityTag");
-
-            if (tagBlockEntity.contains("Items", Constants.NBT.TAG_LIST))
+            ContainerComponent itemContainer = data.get(DataComponentTypes.CONTAINER);
+            if (itemContainer != null)
             {
-                NbtList tagList = tagBlockEntity.getList("Items", Constants.NBT.TAG_COMPOUND);
-                final int count = tagList.size();
-                int maxSlot = -1;
+                DefaultedList<ItemStack> items = EMPTY_LIST;
+                Iterator<ItemStack> iter = itemContainer.stream().iterator();
 
                 if (slotCount <= 0)
                 {
-                    for (int i = 0; i < count; ++i)
+                    Item itemIn = stackIn.getItem();
+                    if (itemIn instanceof BlockItem && ((BlockItem) itemIn).getBlock() instanceof ShulkerBoxBlock)
+                        slotCount = ShulkerBoxBlockEntity.INVENTORY_SIZE;
+                    else
+                        slotCount = 27;
+                    for (int i = 0; i < slotCount; i++)
                     {
-                        NbtCompound tag = tagList.getCompound(i);
-                        int slot = tag.getByte("Slot");
-
-                        if (slot > maxSlot)
+                        if (iter.hasNext())
                         {
-                            maxSlot = slot;
+                            items.add(iter.next());
+                        }
+                        else
+                        {
+                            items.add(ItemStack.EMPTY);
                         }
                     }
-
-                    slotCount = maxSlot + 1;
+                    return items;
                 }
-
-                DefaultedList<ItemStack> items = DefaultedList.ofSize(slotCount, ItemStack.EMPTY);
-
-                for (int i = 0; i < count; ++i)
+                else
                 {
-                    NbtCompound tag = tagList.getCompound(i);
-                    ItemStack stack = ItemStack.fromNbt(tag);
-                    int slot = tag.getByte("Slot");
-
-                    if (slot >= 0 && slot < items.size() && stack.isEmpty() == false)
+                    if (slotCount > 256)
                     {
-                        items.set(slot, stack);
+                        // ContainerComponent.MAX_SLOTS
+                        slotCount = 256;
                     }
+                    for (int i = 0; i < slotCount; i++)
+                    {
+                        if (iter.hasNext())
+                        {
+                            items.add(iter.next());
+                        }
+                        else
+                        {
+                            items.add(ItemStack.EMPTY);
+                        }
+                    }
+                    return items;
                 }
-
-                return items;
             }
+            else
+                return EMPTY_LIST;
         }
-
-        return EMPTY_LIST;
+        else
+            return EMPTY_LIST;
     }
 
     /**

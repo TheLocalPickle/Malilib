@@ -29,9 +29,12 @@ public abstract class MixinClientPlayNetworkHandler
         this.worldBefore = this.world;
     }
 
-    @Inject(method = "onGameJoin", at = @At(value = "INVOKE",
-                target = "Lnet/minecraft/client/MinecraftClient;joinWorld(" +
-                         "Lnet/minecraft/client/world/ClientWorld;)V"))
+    @Inject(method = "onGameJoin",
+            at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/MinecraftClient;joinWorld(" +
+                    "Lnet/minecraft/client/world/ClientWorld;" +
+                    "Lnet/minecraft/client/gui/screen/DownloadingTerrainScreen$WorldEntryReason;" +
+                    ")V"))
     private void onPreGameJoin(GameJoinS2CPacket packet, CallbackInfo ci)
     {
         ((WorldLoadHandler) WorldLoadHandler.getInstance()).onWorldLoadPre(this.worldBefore, this.world, MinecraftClient.getInstance());
